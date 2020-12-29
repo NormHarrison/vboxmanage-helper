@@ -10,31 +10,26 @@ Uses
 Type
   TCommand =
   (
-    FirstCommand=0,
-    Modify=0,
+    Modify,
     Restore,
     Credits,
-    Exit=3,
-    LastCommand=3
+    Exit
   );
 
   TField =
   (
-    FirstField=0,
-    DmiBIOSVendor=0,
+    DmiBIOSVendor,
     DmiBIOSVersion,
     DmiBIOSReleaseDate,
     DmiSystemVendor,
     DmiSystemProduct,
-    DmiBoardVendor=5,
-    LastField=5,
+    DmiBoardVendor,
     All
   );
 
   TSystemVendor =
   (
-    FirstVendor=0,
-    Dell=0,
+    Dell,
     HP,
     Lenovo,
     Acer,
@@ -44,8 +39,7 @@ Type
     Samsung,
     Alienware,
     Gateway,
-    Sun_Microsystems=10,
-    LastVendor=10,
+    Sun_Microsystems,
     Custom
   );
 
@@ -80,7 +74,7 @@ Const
     'IBM'
   );
 
-  System_models: array[FirstVendor..LastVendor] of array of ansistring =
+  System_models: array[Dell..Sun_Microsystems] of array of ansistring =
   (
     ('Latitude', 'Dimension', 'Optiplex', 'Vostro', 'Inspiron'),
     ('Pavilion', 'Slimline', 'Presario', 'ProDesk', 'EliteDesk'),
@@ -134,7 +128,7 @@ Var
 Function NonZero(Num: integer): integer;
 
 begin
-  If Num = 0 then NonZero := 1;
+  If Num = 0 then NonZero := 1 Else NonZero := Num;
 end;
 
 
@@ -253,7 +247,7 @@ begin
 
     For Sysven_iter in TSystemVendor do WriteLn(output, Ord(Sysven_iter), '. ', Sysven_iter);
 
-    Choice := ReadIntOnly(0, Ord(Custom));
+    Choice := ReadIntOnly(Ord(Dell), Ord(Sun_Microsystems));
     Sysven := TSystemVendor(Choice);
 
     { If the user still wanted to enter a custom model }
@@ -301,7 +295,7 @@ begin
 
   Sysven := Custom;
 
-  For Field := FirstField to LastField do  // Try: For Field in FirstField..LastField
+  For Field := DmiBIOSVendor to DmiBoardVendor do  // Try: For Field in DmiBIOSVendor..DmiBoardVendor, or: Low(TField) to High(TField) - All
   begin
     Field_value := '';
     WriteLn(output, Field, ': ', Field_descriptions[Field], LE);
@@ -326,7 +320,7 @@ begin
 
         DmiSystemVendor:
         begin
-           Sysven := TSystemVendor(Random(Ord(LastVendor) + 1));
+           Sysven := TSystemVendor(Random(Ord(Custom)));
            WriteStr(Field_value, Sysven);
         end;
 
@@ -335,7 +329,7 @@ begin
           If Sysven <> Custom then
             Field_value := RandomFrom(System_models[Sysven])
           else
-            Field_value := RandomFrom(System_models[TSystemVendor(Random(Ord(LastVendor) + 1))]);
+            Field_value := RandomFrom(System_models[TSystemVendor(Random(Ord(Custom)))]);
         end;
 
       end;
@@ -381,7 +375,7 @@ begin
     WriteLn(output, Format('%d%s %-19s %s', [Ord(Field), '.', FieldStr + ':', Field_descriptions[Field]]));
   end;
 
-  Choice := ReadIntOnly(0, Ord(All));
+  Choice := ReadIntOnly(Ord(DmiBIOSVendor), Ord(All));
   Field := TField(Choice);
   WriteStr(FieldStr, Field);
 
@@ -393,7 +387,7 @@ begin
   end
   else
   begin
-    For Field := DmiBIOSVendor to DmiBoardVendor do  // Try: For Field in (TField - All) do, or: Fields := TField - All (or: - 1)
+    For Field := DmiBIOSVendor to DmiBoardVendor do  // Try: Field in (TField - All)
     begin
       WriteStr(FieldStr, Field);
       Field_path := Format(GEN_DEVICE_PATH, [VM_record.firmware, FieldStr]);
@@ -403,6 +397,20 @@ begin
     WriteLn(output, 'Reset all fields to default value');
   end;
 
+end;
+
+
+
+{ Display credits information }
+
+Procedure ShowCredits();
+
+begin
+  WriteLn(output, LE, 'Based upon the Windows Batch version originally by JayMontana36.', LE,
+    'Original Github project page: https://github.com/JayMontana36/vBoxSysInfoMod', LE, LE,
+    'This program was written in Pascal and can be compiled on Windows, Mac OSX or Linux using ',
+    'the Free Pascal Compiler in OBJFPC mode:', LE,
+    'https://www.freepascal.org');
 end;
 
 
@@ -423,12 +431,12 @@ Begin
   repeat
     WriteLn(output, LE, 'Currently available commands:');
     For Command in TCommand do WriteLn(output, Ord(Command), '. ', Command);
-    Choice := ReadIntOnly(0, Ord(LastCommand));
+    Choice := ReadIntOnly(Ord(Modify), Ord(Exit));
 
     Case TCommand(Choice) of
       Modify:  ModifyVM();
       Restore: ResetVM();
-      //'Credits':
+      Credits: ShowCredits();
       Exit:    Halt(0);
     end;
   until false;
