@@ -2,18 +2,26 @@ Program VBoxManage_Helper(output, input);
 
 {$MODE OBJFPC}
 
-{ Add check to see if VirtualBox is installed (or maybe installed in a different location) }
 
 Uses
   SysUtils, StrUtils, Process;
 
 Type
+  TPlatform =
+  (
+    Windows,
+    Mac_OSX,
+    Linux,
+    Other
+  );
+
   TCommand =
   (
     Modify,
     Restore,
+    ChangeDir,
     Credits,
-    Exit
+    Quit
   );
 
   TField =
@@ -50,9 +58,12 @@ Type
   end;
 
 Const
-  VBOX = 'VBoxManage';
   GEN_DEVICE_PATH = 'VBoxInternal/Devices/%s/0/Config/%s';
+  CMD_DIR = 'C:\Windows\System32\cmd.exe';
   LE = LineEnding;
+
+  { 13 = Carriage return, 10 = Line feed }
+  Line_delimit: set of char = [#13, #10];
 
   Field_descriptions: array[TField] of ansistring = 
   (
@@ -92,32 +103,31 @@ Const
 
   {$IFDEF DARWIN}
     {$NOTE MAC OSX DETECTED }
-    PLATFORM = 'MAC OSX';
-    VBOX_DIR = '/usr/local/bin/';
+    PLATFORM = Mac_OSX;
   {$ELSE}
   {$IFDEF LINUX}
     {$NOTE LINUX DETECTED }
-    PLATFOMR = 'LINUX';
-    VBOX_DIR = '/usr/bin';
+    PLATFOMR = Linux;
   {$ELSE}
   {$IFDEF WINDOWS}
     {$NOTE WINDOWS DETECTED }
-    PLATFORM = 'WINDOWS';
-    VBOX_DIR = '/Program Files/Oracle/VirtualBox/';
+    PLATFORM = Windows;
   {$ELSE}
-  {$NOTE
-    ### UNKNOWN OPERATING SYSTEM DETECTED ###
-    This program should be able to work on any
-    operating system that both FPC and VirtualBox
-    support, but default directory locations are
-    only supplied for OSX, Linux and Windows.}
+    PLATFORM = Other;
+    {$NOTE
+      ### UNKNOWN OPERATING SYSTEM DETECTED ###
+      This program should be able to work on any
+      operating system that both FPC and VirtualBox
+      support, but default directory locations are
+      only supplied for OSX, Linux and Windows.}
   {$ENDIF}
   {$ENDIF}
   {$ENDIF}
 
 Var
-  Choice:  integer;
-  Command: TCommand;
+  VBOX_DIR: string;
+  Choice:   integer;
+  Command:  TCommand;
 
 { All identifiers above are global to the whole program }
 
@@ -138,6 +148,7 @@ end;
 Function ReadIntOnly(const Lower_bound, Upper_bound: integer): integer;
 
 var
+  VBOX_DIR:  string;
   Input_str: string;
   Bad_char:  word;
 
@@ -165,6 +176,36 @@ end;
 
 
 
+{ A procedure that simplifies running VBoxManage }
+
+Procedure RunVBoxCommand(const Args: array of ansistring; out Stdout: ansistring);
+
+{$IFDEF WINDOWS}
+var
+  Arg: string;
+  Windows_args: array of ansistring = ('/c', VBOX_DIR);
+{$ENDIF}
+
+begin
+  {$IFDEF WINDOWS}
+  For Arg in Args do
+  begin
+    SetLength(Windows_args, Length(Windows_args) + 1);
+    Windows_args[High(Windows_args)] := Arg;
+  end;
+
+  RunCommand(CMD_DIR, Windows_args, Stdout, [poWaitOnExit, poStdErrtoOutPut], swoNone);
+
+  {$ELSE}
+
+  RunCommand(VBOX_DIR, Args, Stdout, [poWaitOnExit]);
+  {$ENDIF}
+
+  WriteLn(output, 'OUTPUT: "', Stdout, '"');
+end;
+
+
+
 { Enumerates through all detected VMs and returns a TVMRecord type of the selected one }
 
 Procedure EnumerateVMs(out VM_record: TVMRecord);
@@ -177,28 +218,38 @@ var
   Stdout:       ansistring;
 
 begin
-  RunCommandInDir(VBOX_DIR, VBOX + ' list ' + 'vms', Stdout);
+  RunVBoxCommand(['list', 'vms'], Stdout);
 
   { WordCount is used to find the number of lines in this case,
     as each "word" is delimited by a new line character (LE) }
 
-  VM_count := WordCount(Stdout, [LE]);
+  VM_count := WordCount(Stdout, Line_delimit);
+
+  If VM_count = 0 then
+  begin
+    WriteLn(output, 'No VMs could be found, this is most likely because:', LE,
+      '1. You need to set the directory to where you installed VirtualBox using ChangeDir on the main menu, or...', LE,
+      '2. You haven''t created any VMs within VirtualBox yet.', LE);
+    Exit();
+  end;
+
   WriteLn(output, 'Which VM will this command be used on? (Total: ', VM_count, ')');
 
-  For VM_index := 1 to VM_count do WriteLn(output, VM_index, '. ', ExtractWord(VM_index, Stdout, [LE]));
+  For VM_index := 1 to VM_count do WriteLn(output, VM_index, '. ', ExtractWord(VM_index, Stdout, Line_delimit));
   VM_index := ReadIntOnly(1, VM_count);
 
-  Sel_VM := ExtractWord(VM_index, Stdout, [LE]);
+  Sel_VM := ExtractWord(VM_index, Stdout, Line_delimit);
   Sel_VM := StringReplace(Sel_VM, '"', '', [rfIgnoreCase]);
 
 
   with VM_record do
   begin
-    Name := ExtractWord(1, Sel_VM, ['"']);
+    Name := '"' + ExtractWord(1, Sel_VM, ['"']) + '"';
     Uuid := StringReplace(ExtractWord(2, Sel_VM, ['"']), ' ', '', [rfIgnoreCase]);
 
-    RunCommandInDir(VBOX_DIR, VBOX + ' showvminfo ' + Uuid, Stdout);
-    Firmware_str := ExtractWord(15, Stdout, [LE]);
+    RunVBoxCommand(['showvminfo', '--machinereadable', Uuid], Stdout);
+    Firmware_str := Copy(Stdout, Pos('firmware', Stdout), 16);
+    WriteLn(output, 'FIRMWARE STRING: ', Firmware_str);
 
     If Pos('BIOS', Firmware_str) <> 0 then
       Firmware := 'pcbios'
@@ -285,8 +336,6 @@ var
   Field_path:   string;
   Field_value:  string;
 
-  Dummy_stdout: ansistring;
-
   Sysven:       TSystemVendor;
   SysvenStr:    string;
 
@@ -342,9 +391,13 @@ begin
 
     WriteStr(FieldStr, Field);
     Field_path := Format(GEN_DEVICE_PATH, [VM_record.Firmware, FieldStr]);
+    Field_value := Format('"string:%s"', [Field_value]);
 
-    RunCommandInDir(VBOX_DIR, Format('%s setextradata %s %s "string:%s"',
-      [VBOX, VM_record.Uuid, Field_path, Field_value]), Dummy_stdout);
+    //RunVBoxCommand(['setextradata', VM_record.Name, Field_path, Field_value], Dummy_stdout);
+
+    WriteLn(output, Field_path, ' ', Field_value);
+
+    ExecuteProcess(VBOX_DIR, ['setextradata', VM_record.Uuid, Field_path, Field_value]);
   end;
 end;
 
@@ -357,9 +410,8 @@ Procedure ResetVM();
 var
   VM_record:    TVMRecord;
 
-  Dummy_stdout: ansistring;
-
   Choice:       integer;
+
   Field:        TField;
   FieldStr:     string;
   Field_path:   string;
@@ -382,8 +434,9 @@ begin
   If Field <> All then
   begin
     Field_path := Format(GEN_DEVICE_PATH, [VM_record.firmware, FieldStr]);
-    RunCommandInDir(VBOX_DIR, Format('%s setextradata %s %s "<EMPTY>"', [VBOX, VM_record.Uuid, Field_path]), Dummy_stdout);
-    WriteLn(output, 'Reset field "', FieldStr, '" to default value.');
+    ExecuteProcess(VBOX_DIR, ['setextradata', VM_record.Uuid, Field_path, '"<EMPTY>"']);
+
+    WriteLn(output, 'Reset field "', FieldStr, '" to it''s default value.');
   end
   else
   begin
@@ -391,10 +444,10 @@ begin
     begin
       WriteStr(FieldStr, Field);
       Field_path := Format(GEN_DEVICE_PATH, [VM_record.firmware, FieldStr]);
-      RunCommandInDir(VBOX_DIR, Format('%s setextradata %s %s "<EMPTY>"', [VBOX, VM_record.Uuid, Field_path]), Dummy_stdout);
+      ExecuteProcess(VBOX_DIR, ['setextradata', VM_record.Uuid, Field_path, '"<EMPTY>"']);
     end;
 
-    WriteLn(output, 'Reset all fields to default value');
+    WriteLn(output, 'Reset all fields to their default value''s');
   end;
 
 end;
@@ -415,9 +468,44 @@ end;
 
 
 
+{ Allows the user to set the directory where VBoxManage is installed }
+
+Procedure SetDir();
+
+begin
+  repeat
+    If PLATFORM = Other then
+      WriteLn(output, 'The platform the program was compiled for has no preset default VirtualBox directory, ',
+        'to proceed, you will need to manually specically where your VirtualBox installation is located.', LE, LE,
+        'Directories with spaces anywhere in their path name will need to be surrounded by double-quotes.');
+
+    Write(output, 'Enter VirtualBox directory >');
+    ReadLn(input, VBOX_DIR);
+
+    If VBOX_DIR[Length(VBOX_DIR) - 1] <> '/' then VBOX_DIR := VBOX_DIR + '/';
+
+    If not FileExists(VBOX_DIR + 'VBoxManage') then
+      WriteLn(output, LE, 'That directory doesn''t seem to contain ',
+        'the VBoxManage executable, please double-check your spelling and try again.', LE)
+    Else
+      Break;
+  until false;
+
+end;
+
+
+
 { Start of Main entry procedure }
 
 Begin
+  Case PLATFORM of
+    Mac_OSX: VBOX_DIR := '/usr/local/bin/VBoxManage';
+    Windows: VBOX_DIR := 'C:\Program Files\Oracle\VirtualBox\VBoxManage.exe';
+    Linux:   VBOX_DIR := '/usr/bin/VBoxManage';
+  else
+    SetDir();
+  end;
+
   { Make sure random patterns don't repeat }
   Randomize();
 
@@ -431,13 +519,14 @@ Begin
   repeat
     WriteLn(output, LE, 'Currently available commands:');
     For Command in TCommand do WriteLn(output, Ord(Command), '. ', Command);
-    Choice := ReadIntOnly(Ord(Modify), Ord(Exit));
+    Choice := ReadIntOnly(Ord(Modify), Ord(Quit));
 
     Case TCommand(Choice) of
-      Modify:  ModifyVM();
-      Restore: ResetVM();
-      Credits: ShowCredits();
-      Exit:    Halt(0);
+      Modify:    ModifyVM();
+      Restore:   ResetVM();
+      ChangeDir: SetDir();
+      Credits:   ShowCredits();
+      Quit:      Halt(0);
     end;
   until false;
 
