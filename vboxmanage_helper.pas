@@ -107,7 +107,7 @@ Const
   {$ELSE}
   {$IFDEF LINUX}
     {$NOTE LINUX DETECTED }
-    PLATFOMR = Linux;
+    PLATFORM = Linux;
   {$ELSE}
   {$IFDEF WINDOWS}
     {$NOTE WINDOWS DETECTED }
@@ -182,8 +182,8 @@ Procedure RunVBoxCommand(const Args: array of ansistring; out Stdout: ansistring
 
 {$IFDEF WINDOWS}
 var
-  Arg: string;
-  Windows_args: array of ansistring = ('/c', VBOX_DIR);
+  Arg:          string;
+  Windows_args: array of ansistring = ('/c', 'C:\Program Files\Oracle\VirtualBox\VBoxManage');
 {$ENDIF}
 
 begin
@@ -200,8 +200,6 @@ begin
 
   RunCommand(VBOX_DIR, Args, Stdout, [poWaitOnExit]);
   {$ENDIF}
-
-  WriteLn(output, 'OUTPUT: "', Stdout, '"');
 end;
 
 
@@ -249,7 +247,7 @@ begin
 
     RunVBoxCommand(['showvminfo', '--machinereadable', Uuid], Stdout);
     Firmware_str := Copy(Stdout, Pos('firmware', Stdout), 16);
-    WriteLn(output, 'FIRMWARE STRING: ', Firmware_str);
+    //WriteLn(output, 'FIRMWARE STRING: ', Firmware_str);
 
     If Pos('BIOS', Firmware_str) <> 0 then
       Firmware := 'pcbios'
@@ -336,6 +334,8 @@ var
   Field_path:   string;
   Field_value:  string;
 
+  Dummy_stdout: ansistring;
+
   Sysven:       TSystemVendor;
   SysvenStr:    string;
 
@@ -396,8 +396,7 @@ begin
     //RunVBoxCommand(['setextradata', VM_record.Name, Field_path, Field_value], Dummy_stdout);
 
     WriteLn(output, Field_path, ' ', Field_value);
-
-    ExecuteProcess(VBOX_DIR, ['setextradata', VM_record.Uuid, Field_path, Field_value]);
+    RunCommand(VBOX_DIR, ['setextradata', VM_record.Uuid, Field_path, Field_value], Dummy_stdout, [poWaitOnExit]);
   end;
 end;
 
@@ -474,21 +473,20 @@ Procedure SetDir();
 
 begin
   repeat
-    If PLATFORM = Other then
-      WriteLn(output, 'The platform the program was compiled for has no preset default VirtualBox directory, ',
-        'to proceed, you will need to manually specically where your VirtualBox installation is located.', LE, LE,
-        'Directories with spaces anywhere in their path name will need to be surrounded by double-quotes.');
-
     Write(output, 'Enter VirtualBox directory >');
     ReadLn(input, VBOX_DIR);
 
     If VBOX_DIR[Length(VBOX_DIR) - 1] <> '/' then VBOX_DIR := VBOX_DIR + '/';
 
     If not FileExists(VBOX_DIR + 'VBoxManage') then
+    begin
       WriteLn(output, LE, 'That directory doesn''t seem to contain ',
-        'the VBoxManage executable, please double-check your spelling and try again.', LE)
-    Else
-      Break;
+        'the VBoxManage executable, please double-check your spelling and try again.', LE);
+      Continue;
+    end;
+
+    VBOX_DIR := VBOX_DIR + 'VBoxManage'{$IFDEF WINDOWS} + '.exe' {$ENDIF};
+    Break;
   until false;
 
 end;
@@ -498,11 +496,20 @@ end;
 { Start of Main entry procedure }
 
 Begin
+  VBOX_DIR := '';
+
   Case PLATFORM of
     Mac_OSX: VBOX_DIR := '/usr/local/bin/VBoxManage';
     Windows: VBOX_DIR := 'C:\Program Files\Oracle\VirtualBox\VBoxManage.exe';
     Linux:   VBOX_DIR := '/usr/bin/VBoxManage';
-  else
+  end;
+
+  If not FileExists(VBOX_DIR) then
+  begin
+    WriteLn(output, 'VirtualBox is either not installed, or was installed to an unknown/custom directory,', LE,
+      'this program is not of any use unless VirtualBox is installed and it''s directory is known.', LE,
+      'If it is, please enter it''s path now:', LE, LE,
+      '(Please surround directories that have spaces in their path name with "double-quotes")', LE);
     SetDir();
   end;
 
